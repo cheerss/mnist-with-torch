@@ -1,5 +1,5 @@
-require 'cutorch'
-require 'cunn'
+require 'torch'
+require 'nn'
 
 fullconnect = {}
 
