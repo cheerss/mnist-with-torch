@@ -1,12 +1,5 @@
-gpu = false
-shuffle = false
-if gpu then
-    require 'cutorch'
-    require 'cunn'
-else 
-    require 'torch'
-    require 'nn'
-end
+require 'torch'
+require 'nn'
 require 'optim'
 require 'dataset'
 require 'fullconnect'
@@ -16,21 +9,18 @@ require 'convolution'
 
 format = 'fullconnect'
 normalize = nn.BatchNormalization(28 * 28)
-if gpu then
-    normalize = normalize:cuda()
-end
 
 all = 60000
 batch_size = 3
 batch = all / batch_size
 test_num = 10000
-all_images = torch.Tensor(dataset.read_images("train-images-idx3-ubyte", 0, all, format))
-all_labels = torch.Tensor(dataset.read_labels("train-labels-idx1-ubyte", 0, all)) + 1
+all_images = torch.Tensor(dataset.nread_images("train-images-idx3-ubyte", 0, all, format))
+all_images:reshape(all_images, all, all_images:size(1) / all)
+all_labels = torch.Tensor(dataset.nread_labels("train-labels-idx1-ubyte", 0, all)) + 1
 
 shuffle_indecies = torch.randperm(all):long()
 all_images = all_images:index(1, shuffle_indecies):squeeze()
 all_labels = all_labels:index(1, shuffle_indecies):squeeze()
-
 
 if true then
     net = fullconnect:net()
@@ -39,26 +29,40 @@ if true then
     x, dl_dx = net:getParameters()
     config = {
         learningRate = 1e-3,
+        weightDecay = 0,
+        momentum = 0,
         learningRateDecay = 1e-7
     }
     epoch = 2
     iterations = epoch * batch
-    for i = 1, iterations do
-        local train_images = all_images[{{1, i % batch * batch_size}}]
-        --train_images = normalize:forward(train_images)
-        local train_labels = all_labels[{{1, i % batch * batch_size}}]
-
-        function feval(params)
-            dl_dx:zero()
-            local output = net:forward(train_images)
-            local err = criterion:forward(output, train_labels)
-            local gradOut = criterion:backward(output, train_labels)
-            net:backward(train_images, gradOut)
-            return err, dl_dx
+    local last = os.clock()
+    local now = 0
+    local counter = 0
+    function feval(params)
+        local start_index = 1 + counter * batch_size
+        local end_index = math.min(all, start_index + batch_size)
+        if end_index == all then
+            counter = 0
+        else
+            counter = counter + 1
         end
-        _, loss = optim.sgd(feval, x, config)
+        local train_images = all_images[{{start_index, end_index}}]
+        --train_images = normalize:forward(train_images)
+        local train_labels = all_labels[{{start_index, end_index}}]
+        dl_dx:zero()
+        local output = net:forward(train_images)
+        local err = criterion:forward(output, train_labels)
+        local gradOut = criterion:backward(output, train_labels)
+        net:backward(train_images, gradOut)
+        return err, dl_dx
+    end
+
+    for i = 1, iterations do
+                _, loss = optim.sgd(feval, x, config)
         if i % 10 == 0 then
-            print(string.format("iterations %d, current error: %f", i, loss[1]))
+            now = os.clock() 
+            print(string.format("time: %.6f, iterations %d, current error: %f", now - last,  i, loss[1]))
+            last = now
         end
     end
 else
@@ -82,8 +86,9 @@ labels = all_labels
 train_precision = model_precision(net, images, labels, all)
 print(string.format("train_precision: %f", train_precision))
 
-test_images = torch.Tensor(dataset.read_images("t10k-images-idx3-ubyte", 0, test_num, format))
-test_labels = torch.Tensor(dataset.read_labels("t10k-labels-idx1-ubyte", 0, test_num))
+test_images = torch.Tensor(dataset.nread_images("t10k-images-idx3-ubyte", 0, test_num, format))
+test_images:reshape(test_images, test_num, test_images:size(1) / test_num)
+test_labels = torch.Tensor(dataset.nread_labels("t10k-labels-idx1-ubyte", 0, test_num))
 
 test_images = torch.Tensor(test_images)
 test_images = normalize:forward(test_images)

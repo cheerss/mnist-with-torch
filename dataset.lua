@@ -1,3 +1,4 @@
+require 'torch'
 dataset = {}
 
 dataset.read_labels = function(filename, start,  count)
@@ -19,6 +20,31 @@ dataset.read_labels = function(filename, start,  count)
     file:close()
     return res
 end
+
+dataset.nread_labels = function(filename, start, count, format)
+    local file = torch.DiskFile(filename, "r")
+    file:binary()
+    file:bigEndianEncoding()
+
+    local magic = file:readInt()
+    local all_count = file:readInt()
+    file:seek(9 + start)
+    local res = file:readByte(count)
+    return torch.totable(res)
+end
+
+dataset.nread_images = function(filename, start, count, format)
+    local  file = torch.DiskFile(filename, "r")
+    file:binary()
+    file:bigEndianEncoding()
+    local magic =  file:readInt()
+    local all_count = file:readInt()
+    local width = file:readInt(); local height = file:readInt()
+    file:seek(17 + start * height * width)
+    local res = file:readByte(count * height * width)
+    return torch.totable(res)
+end
+
 
 dataset.read_images = function(filename, start, count, format)
     local file = io.open(filename, "r")
