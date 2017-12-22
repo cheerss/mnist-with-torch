@@ -7,6 +7,7 @@ require 'convolution'
 
 cmd = torch.CmdLine()
 cmd:option('-gpu', false, 'whether to use GPU')
+cmd:option('-cudnn', false, 'whether to use cudnn, could be true only when using GPU')
 cmd:option('-batchSize', 500, 'batch size')
 cmd:option('-network', 'fullconnect', 'the type of the network, could be "fullconnect" or "conv"')
 cmd:option('-pretrained', 0, 'the path of a pretrained moedel, have not been used yet')
@@ -21,6 +22,7 @@ params = cmd:parse(arg)
 
 if params.gpu then
     require 'cutorch'
+    require 'cudnn'
     require 'cunn'
     gpu = params.gpu
 end
@@ -32,9 +34,9 @@ batch = all / batch_size
 test_num = params.testSize
 config = {
     learningRate = params.learningRate,
-    weightDecay = 0,
-    momentum = 0,
-    learningRateDecay = 1e-7
+    weightDecay = params.weightDecay,
+    momentum = params.momentum,
+    learningRateDecay = params.learningRateDecay
 }
 all_images = torch.Tensor(dataset.nread_images("train-images-idx3-ubyte", 0, all, format))
 all_images:reshape(all_images, all, all_images:size(1) / all)
@@ -52,14 +54,17 @@ if true then
         all_images = all_images:cuda()
         all_labels = all_labels:cuda()
         net = net:cuda()
+        if gpu and params.cudnn then
+            cudnn.convert(net, cudnn)
+        end
         criterion = criterion:cuda()
     end
     x, dl_dx = net:getParameters()
     epoch = params.epoch
     iterations = epoch * batch
-    local last = os.clock()
-    local now = 0
     local counter = 0
+    local timer = torch.Timer()
+    local ltimer = torch.Timer()
     for i = 1, iterations do
         function feval(params)
             shuffle_indecies = torch.randperm(all):long()
@@ -74,7 +79,16 @@ if true then
             local train_images = all_images:index(1, shuffle_indecies)
             local train_labels = all_labels:index(1, shuffle_indecies)
             dl_dx:zero()
-            local output = net:forward(train_images)
+            local inter_out = {}
+            local t = {}
+            for i = 1, 4 do
+                t[i] = ltimer:time().real
+                local layer1 = net:get(i)
+                inter_out[i] = layer1:forward(inter_out[i-1] or train_images)
+                ltimer:reset()
+            end
+--            print(string.format("%f %f %f %f\n", t[1], t[2], t[3], t[4]))
+            local output = inter_out[5] or net:forward(train_images)
             local err = criterion:forward(output, train_labels)
             local gradOut = criterion:backward(output, train_labels)
             net:backward(train_images, gradOut)
@@ -82,9 +96,9 @@ if true then
         end
         _, loss = optim.sgd(feval, x, config)
         if i % 10 == 0 then
-            now = os.clock()
-            print(string.format("time: %.6f, iterations %d, current error: %f", now - last,  i, loss[1]))
-            last = now
+            time = timer:time().real
+            print(string.format("time: %.6f, iterations %d, current error: %f", time,  i, loss[1]))
+            timer:reset()
         end
     end
 else
